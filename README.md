@@ -23,12 +23,19 @@ This project tests the use of two machine learning methods for the quick identif
 
 - The necessary requirements can be found via:
 ```
-requirements.txt
+python_requirements.txt
+r_requirements.txt
 ```
 
 
 ## Code Breakdown
-TBD
+The models we plan to utilize are Bayesian and CNN, with the CNN being implemented with python and the abyesian model through R.
+
+# CNN
+
+# Bayesian
+
+
 
 ## Lit Review
 Our review of current application of fungi classification using ML methods can be found <a href="https://docs.google.com/document/d/1nX6VJCRoBd36EaXLEqsjAtA8lDCCTGIvGkf0JazuqYY/edit?usp=sharing">here</a>
