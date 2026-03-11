@@ -31,9 +31,9 @@ r_requirements.txt
 ## Code Breakdown
 The models we plan to utilize are Bayesian and CNN, with the CNN being implemented with python and the abyesian model through R.
 
-# CNN
+### CNN
 
-# Bayesian
+### Bayesian
 
 
 
