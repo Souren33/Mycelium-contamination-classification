@@ -1,1 +1,1 @@
-pip install pillow
+pip install numpy matplotlib pandas tensorflow scikit-learn pillow
