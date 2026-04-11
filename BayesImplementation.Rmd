@@ -1,30 +1,67 @@
 ---
 title: "BayesImplementation"
-author: "Kevin"
+author: "Kevin & Souren"
 date: "`r Sys.Date()`"
 output: html_document
 ---
-
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 5
+)
 ```
-
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r libraries}
+library(tidyverse)
+library(ggplot2)
+#library(corrplot)
+#library(brms)
+#library(tidybayes)
+#library(bayesplot)
+#library(loo)
+#library(patchwork)
 ```
+```{r load-data}
+df <- read_csv("features_merged.csv")
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+cat("Dimensions:", dim(df), "\n")
+cat("First 10 columns:", names(df)[1:10], "\n")
 ```
+```{r structure}
+head(df, 5)
+```
+```{r label-dist}
+ggplot(df, aes(x = factor(label), fill = factor(label))) +
+  geom_bar() +
+  scale_fill_manual(values = c("#3B8BD4", "#E8593C")) +
+  labs(title = "Label distribution", x = "Label", y = "Count", fill = "Label") +
+  theme_minimal()
+```
+```{r pixel-sanity}
+pixel_cols <- df |> select(-filename, -label)
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+cat("Min:",  min(pixel_cols),              "\n")
+cat("Max:",  max(pixel_cols),              "\n")
+cat("Mean:", mean(as.matrix(pixel_cols)), "\n")
+cat("Std:",  sd(as.matrix(pixel_cols)),   "\n")
+```
+```{r color-histogram}
+breaks <- seq(0, 1, length.out = 9)  # 8 bins
+
+color_features <- df |>
+  rowwise() |>
+  mutate(
+    r_bins = list(hist(c_across(starts_with("r_")), breaks = breaks, plot = FALSE)$counts),
+    g_bins = list(hist(c_across(starts_with("g_")), breaks = breaks, plot = FALSE)$counts),
+    b_bins = list(hist(c_across(starts_with("b_")), breaks = breaks, plot = FALSE)$counts)
+  ) |>
+  unnest_wider(r_bins, names_sep = "_") |>
+  unnest_wider(g_bins, names_sep = "_") |>
+  unnest_wider(b_bins, names_sep = "_") |>
+  select(filename, label, starts_with("r_bins"), starts_with("g_bins"), starts_with("b_bins"))
+
+head(color_features)
+```
