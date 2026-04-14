@@ -17,17 +17,12 @@ knitr::opts_chunk$set(
 ```{r libraries}
 library(tidyverse)
 library(ggplot2)
-#library(corrplot)
-#library(brms)
-#library(tidybayes)
-#library(bayesplot)
-#library(loo)
-#library(patchwork)
+library(gridExtra)
 ```
 ```{r load-data}
 df <- read_csv("features_merged.csv")
 
-cat("Dimensions:", dim(df), "\n")
+cat("Total Images, RGB by Pixels per image(3*128^2):", dim(df), "\n")
 cat("First 10 columns:", names(df)[1:10], "\n")
 ```
 ```{r structure}
@@ -36,11 +31,12 @@ head(df, 5)
 ```{r label-dist}
 ggplot(df, aes(x = factor(label), fill = factor(label))) +
   geom_bar() +
-  scale_fill_manual(values = c("#3B8BD4", "#E8593C")) +
-  labs(title = "Label distribution", x = "Label", y = "Count", fill = "Label") +
+  scale_fill_manual(values = c("black", "red")) +
+  labs(title = "Label distribution(Clean = 0, Contaminated = 1", x = "Label", y = "Count", fill = "Label") +
   theme_minimal()
 ```
 ```{r pixel-sanity}
+#Dropping non numerical vals
 pixel_cols <- df |> select(-filename, -label)
 
 cat("Min:",  min(pixel_cols),              "\n")
@@ -49,7 +45,8 @@ cat("Mean:", mean(as.matrix(pixel_cols)), "\n")
 cat("Std:",  sd(as.matrix(pixel_cols)),   "\n")
 ```
 ```{r color-histogram}
-breaks <- seq(0, 1, length.out = 9)  # 8 bins
+#bin 1 is 0–0.125, bin 2 is 0.125–0.25, and so on
+breaks <- seq(0, 1, length.out = 9)  #8 bins
 
 color_features <- df |>
   rowwise() |>
@@ -62,6 +59,279 @@ color_features <- df |>
   unnest_wider(g_bins, names_sep = "_") |>
   unnest_wider(b_bins, names_sep = "_") |>
   select(filename, label, starts_with("r_bins"), starts_with("g_bins"), starts_with("b_bins"))
-
+# Condenses to 24 numerical columns per image
 head(color_features)
+```
+```{r train-test-split}
+set.seed(42)
+# Original method/Changed to utilize color_features below
+split_idx <- df |>
+  mutate(row_id = row_number()) |>
+  group_by(label) |> #Stratified to keep 50/50
+  slice_sample(prop = 0.8) |>
+  pull(row_id)
+
+train_df <- df[split_idx, ]
+test_df  <- df[-split_idx, ]
+
+cat("Train size:", nrow(train_df), "| Test size:", nrow(test_df), "\n")
+cat("Train label dist:\n"); print(table(train_df$label))
+cat("Test label dist:\n");  print(table(test_df$label))
+```
+```{r prior-specification}
+# Use color histogram features (24 cols) not raw pixels
+feat_cols <- setdiff(names(color_features), c("filename", "label"))
+
+# Pull histogram rows using same split indices from train-test-split
+train_df <- color_features[split_idx, ]
+test_df  <- color_features[-split_idx, ]
+
+class_counts <- table(train_df$label)
+class_priors <- class_counts / sum(class_counts)
+cat("Class priors:\n"); print(class_priors)
+
+#Normalizing each color bin separately. Ie if red total count is 130, and one bin has 20 then we get a value of 20/130 for that bin.
+normalise_hist <- function(df, feature_cols) {
+  df_norm <- df
+
+  r_cols <- grep("^r_bins", feature_cols, value = TRUE)
+  g_cols <- grep("^g_bins", feature_cols, value = TRUE)
+  b_cols <- grep("^b_bins", feature_cols, value = TRUE)
+
+  for (cols in list(r_cols, g_cols, b_cols)) {
+    chunk    <- as.matrix(df[, cols])
+    row_sums <- rowSums(chunk)
+    row_sums[row_sums == 0] <- 1 #No div by 0
+    df_norm[, cols] <- chunk / row_sums
+  }
+  df_norm
+}
+#Post normalization
+train_df <- normalise_hist(train_df, feat_cols)
+test_df  <- normalise_hist(test_df,  feat_cols)
+
+cat("Number of features:", length(feat_cols), "\n")
+cat("Normalised feature range: [",
+    round(min(as.matrix(train_df[, feat_cols])), 4), ",",
+    round(max(as.matrix(train_df[, feat_cols])), 4), "]\n")
+#Expect mean roughly centered at .5 via beta, gamma for tau demonstarates we are uncertain
+a_mu  <- 2;  b_mu  <- 2
+a_tau <- 2;  b_tau <- 1
+# Using log to avoid multiplication
+log_prior <- function(mu, tau) {
+  if (mu <= 0 || mu >= 1 || tau <= 0) return(-Inf)
+  dbeta(mu,   a_mu,  b_mu,  log = TRUE) +
+  dgamma(tau, a_tau, b_tau, log = TRUE)
+}
+#Gaussian stdev 1/sqrt(tau)
+#Mult with log becomes addition
+log_likelihood_feat <- function(x, mu, tau) {
+  sum(dnorm(x, mean = mu, sd = 1 / sqrt(tau), log = TRUE))
+}
+
+log_posterior_feat <- function(x, mu, tau) {
+  log_likelihood_feat(x, mu, tau) + log_prior(mu, tau)
+}
+```
+```{r model-fitting}
+mh_sampler <- function(x, n_iter = 2000, burnin = 500, thin = 5,
+                       prop_sd_mu = 0.01, prop_sd_tau = 0.1) {
+  mu_cur  <- mean(x)
+  tau_cur <- 1 / var(x)
+  if (!is.finite(tau_cur)) tau_cur <- 1 #Set to one if var(x) = 0(all vals same)
+  mu_cur <- min(max(mu_cur, 1e-6), 1 - 1e-6) #prevent mu from hitting 1 and 0 for beta issues
+
+  samples <- matrix(NA, nrow = n_iter, ncol = 2,
+                    dimnames = list(NULL, c("mu", "tau")))
+  lp_cur <- log_posterior_feat(x, mu_cur, tau_cur)
+
+  for (i in seq_len(n_iter)) {
+    mu_prop  <- mu_cur  + rnorm(1, 0, prop_sd_mu)
+    tau_prop <- tau_cur * exp(rnorm(1, 0, prop_sd_tau))
+    lp_prop  <- log_posterior_feat(x, mu_prop, tau_prop)
+
+    if (is.finite(lp_prop) && is.finite(lp_cur)) {
+      log_accept <- lp_prop - lp_cur + log(tau_prop) - log(tau_cur) #Check if value shows improvement ie positive result(won't be finite if nt)
+      if (is.finite(log_accept) && log(runif(1)) < log_accept) {
+        mu_cur  <- mu_prop
+        tau_cur <- tau_prop
+        lp_cur  <- lp_prop
+      }
+    }#Record regardless accept/reject proposed
+    samples[i, ] <- c(mu_cur, tau_cur)
+  }
+  keep_idx <- seq(burnin + 1, n_iter, by = thin)
+  samples[keep_idx, ]
+}
+
+set.seed(42)
+cat("Running MCMC...\n")
+
+compute_posterior_samples <- function(df_train, feature_cols, class_priors) {
+  classes   <- names(class_priors)
+  all_samps <- list()
+  total     <- length(feature_cols) * length(classes)
+  done      <- 0
+
+  for (cl in classes) {
+    subset <- df_train |>
+      filter(as.character(label) == as.character(cl)) |>  # safe string match
+      select(all_of(feature_cols)) |>
+      as.matrix()
+
+    all_samps[[cl]] <- lapply(seq_len(ncol(subset)), function(j) {
+      done <<- done + 1
+      cat(sprintf("\r  Chain %d / %d", done, total))
+      flush.console()
+      mh_sampler(subset[, j])
+    })
+  }
+  cat("\n")
+  all_samps
+}
+
+posterior_samples <- compute_posterior_samples(train_df, feat_cols, class_priors)
+#Feature 1 class 0/non-contaminated
+samp0 <- posterior_samples[["0"]][[1]]
+cat("\nPosterior samples shape:", dim(samp0), "\n")
+cat("Posterior mean mu  (feature 1, class 0):", round(mean(samp0[,"mu"]),  4), "\n")
+cat("Posterior mean tau (feature 1, class 0):", round(mean(samp0[,"tau"]), 4), "\n")
+#Each loop s becomes new row of values
+log_predictive <- function(x_new, samples) {
+  log_liks <- apply(samples, 1, function(s) {
+    dnorm(x_new, mean = s["mu"], sd = 1 / sqrt(s["tau"]), log = TRUE)
+  })
+  max_ll <- max(log_liks)
+  max_ll + log(mean(exp(log_liks - max_ll)))
+}
+
+predict_one <- function(obs, posterior_samples, class_priors) {
+  log_posteriors <- sapply(names(class_priors), function(cl) {
+    samps   <- posterior_samples[[cl]]
+    log_lik <- sum(mapply(log_predictive, obs, samps))
+    log(class_priors[cl]) + log_lik
+  })
+  as.integer(names(which.max(log_posteriors)))
+}
+#predicts for each row in the DF
+predict_bayes <- function(df_new, feature_cols, posterior_samples, class_priors) {
+  X <- as.matrix(df_new[, feature_cols])
+  apply(X, 1, predict_one,
+        posterior_samples = posterior_samples,
+        class_priors      = class_priors)
+}
+
+test_preds <- predict_bayes(test_df, feat_cols, posterior_samples, class_priors)
+cat("\nPredictions (first 10):", test_preds[1:10], "\n")
+cat("Actual     (first 10):", test_df$label[1:10], "\n")
+```
+```{r mcmc-diagnostics, fig.width=12, fig.height=8}
+# Pick 3 most discriminative features by posterior mean difference
+mu0 <- sapply(posterior_samples[["0"]], function(s) mean(s[, "mu"]))
+mu1 <- sapply(posterior_samples[["1"]], function(s) mean(s[, "mu"]))
+diff_mu <- abs(mu0 - mu1)
+diag_features <- order(diff_mu, decreasing = TRUE)[1:3]
+
+cat("Most discriminative features:", diag_features, "\n")
+cat("Corresponding feature names:", feat_cols[diag_features], "\n")
+cat("Posterior mean differences:", round(diff_mu[diag_features], 5), "\n")
+for (fi in diag_features) {
+  plot_list <- list()
+
+  for (cl in c("0", "1")) {
+    s <- posterior_samples[[cl]][[fi]]
+    df_s <- data.frame(
+      iteration = seq_len(nrow(s)),
+      mu        = s[, "mu"],
+      tau       = s[, "tau"]
+    )
+
+    # Trace mu
+    plot_list[[paste0(cl, "_trace_mu")]] <- ggplot(df_s, aes(x = iteration, y = mu)) +
+      geom_line(colour = "steelblue", linewidth = 0.4) +
+      labs(title = paste0("Trace mu | class ", cl, " feat ", fi),
+           x = "iteration", y = "mu") +
+      theme_minimal()
+
+    # Trace tau
+    plot_list[[paste0(cl, "_trace_tau")]] <- ggplot(df_s, aes(x = iteration, y = tau)) +
+      geom_line(colour = "orange", linewidth = 0.4) +
+      labs(title = paste0("Trace tau | class ", cl, " feat ", fi),
+           x = "iteration", y = "tau") +
+      theme_minimal()
+
+    # ACF mu
+    acf_mu <- acf(s[, "mu"], plot = FALSE)
+    df_acf_mu <- data.frame(lag = acf_mu$lag[-1], acf = acf_mu$acf[-1])
+    plot_list[[paste0(cl, "_acf_mu")]] <- ggplot(df_acf_mu, aes(x = lag, y = acf)) +
+      geom_col(fill = "steelblue", width = 0.4) +
+      geom_hline(yintercept = 1.96 / sqrt(nrow(s)), linetype = "dashed", colour = "gray") +
+      geom_hline(yintercept = -1.96 / sqrt(nrow(s)), linetype = "dashed", colour = "gray") +
+      labs(title = paste0("ACF mu | class ", cl, " feat ", fi),
+           x = "lag", y = "acf") +
+      theme_minimal()
+
+    # ACF tau
+    acf_tau <- acf(s[, "tau"], plot = FALSE)
+    df_acf_tau <- data.frame(lag = acf_tau$lag[-1], acf = acf_tau$acf[-1])
+    plot_list[[paste0(cl, "_acf_tau")]] <- ggplot(df_acf_tau, aes(x = lag, y = acf)) +
+      geom_col(fill = "orange", width = 0.4) +
+      geom_hline(yintercept = 1.96 / sqrt(nrow(s)), linetype = "dashed", colour = "gray") +
+      geom_hline(yintercept = -1.96 / sqrt(nrow(s)), linetype = "dashed", colour = "gray") +
+      labs(title = paste0("ACF tau | class ", cl, " feat ", fi),
+           x = "lag", y = "acf") +
+      theme_minimal()
+  }
+
+  # Print one 2x4 grid per feature
+  gridExtra::grid.arrange(grobs = plot_list, ncol = 4,
+                          top = paste("Feature", fi))
+}
+```
+```{r validation}
+actuals <- test_df$label
+classes <- sort(unique(actuals))
+
+conf_mat <- table(Predicted = test_preds, Actual = actuals)
+cat("Confusion matrix:\n"); print(conf_mat)
+
+compute_metrics <- function(conf_mat, classes) {
+  metrics <- lapply(as.character(classes), function(cl) {
+    TP <- conf_mat[cl, cl]
+    FP <- sum(conf_mat[cl, ]) - TP
+    FN <- sum(conf_mat[, cl]) - TP
+    TN <- sum(conf_mat) - TP - FP - FN
+
+    precision <- if ((TP + FP) == 0) 0 else TP / (TP + FP)
+    recall    <- if ((TP + FN) == 0) 0 else TP / (TP + FN)
+    f1        <- if ((precision + recall) == 0) 0 else
+                   2 * precision * recall / (precision + recall)
+    list(class = cl, TP = TP, FP = FP, FN = FN, TN = TN,
+         precision = precision, recall = recall, f1 = f1)
+  })
+  bind_rows(lapply(metrics, as.data.frame))
+}
+
+metrics_df <- compute_metrics(conf_mat, classes)
+cat("\nPer-class metrics:\n")
+print(metrics_df |> select(class, precision, recall, f1) |>
+        mutate(across(where(is.numeric), \(x) round(x, 4))))
+
+overall_accuracy <- sum(diag(conf_mat)) / sum(conf_mat)
+macro_precision  <- mean(metrics_df$precision)
+macro_recall     <- mean(metrics_df$recall)
+macro_f1         <- mean(metrics_df$f1)
+
+cat(sprintf("\nOverall accuracy : %.4f\n", overall_accuracy))
+cat(sprintf("Macro precision  : %.4f\n", macro_precision))
+cat(sprintf("Macro recall     : %.4f\n", macro_recall))
+cat(sprintf("Macro F1         : %.4f\n", macro_f1))
+
+ggplot(as.data.frame(conf_mat), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile(colour = "white") +
+  geom_text(aes(label = Freq), size = 6) +
+  scale_fill_gradient(low = "lightgreen", high = "forestgreen") +
+  labs(title = "Confusion matrix", fill = "Count") +
+  theme_minimal()
+
 ```
