@@ -20,6 +20,7 @@ library(ggplot2)
 library(gridExtra)
 ```
 ```{r load-data}
+#Recommend updating your workign directory for ease of use
 df <- read_csv("features_merged.csv")
 
 cat("Total Images, RGB by Pixels per image(3*128^2):", dim(df), "\n")
