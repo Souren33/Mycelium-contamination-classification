@@ -11,7 +11,6 @@
 - [About](#about)
 - [Set Up Instructions](#set-up-instructions)
 - [Code Breakdown](#code-breakdown)
-- [Lit Review](#lit-review)
 - [Final Report](#final-report)
 - [Project Authors](#project-authors)
 
@@ -64,10 +63,7 @@ Rather than plugging in single point estimates for mu and tau, we average the Ga
 
 Log predictive likelihoods are summed across all 24 features and combined with the log class prior. The class with the higher combined score wins via argmax.
 
-
-## Lit Review
-Our review of current application of fungi classification using ML methods can be found <a href="https://docs.google.com/document/d/1nX6VJCRoBd36EaXLEqsjAtA8lDCCTGIvGkf0JazuqYY/edit?usp=sharing">here</a>
-                                                                                                                                                                       
+                                                                                                                                                                     
 ## Final Report
 Our final report can be found...
 
