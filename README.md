@@ -42,7 +42,27 @@ TBD
 
 
 ### Bayesian
-TBD
+
+The Bayesian model was implemented from scratch within R and uses a metropolis-hastings MCMC approach for sampling. the 49,152 features are compressed to 24 color histograms/bins, 8 per color. Each channel is normalized independently so each color sums to 1.
+- Total red pixels = x
+- red pixels in the 0 - 0.125 bin = y
+- normalized value = y/x
+
+#### Priors
+As the values fall between (0,1) we will be using a beta prior to estimate mu, and gamma for tau (1/variation(sigma^2). Because these priors are non-conjugate, the use of an MCMC sampling approach was required.
+
+#### Sampling
+independently per feature per class (48 chains total):
+- 2000 iterations, 500 burn-in discarded, thinning by 5
+-   Initial attempts used burn-in of 200, and thinning of 2. This resulted in higher autocorrelation between samples and worse chaining.
+-   Decreasing our proposed step size of mu from .05 to .01 as our data is rather narrow already given it has been twice normalized.
+
+#### Predicting
+
+Log predictive likelihood is done Monte Carlo integration.
+Rather than plugging in single point estimates for mu and tau, we average the Gaussian likelihood across all posterior samples per feature.
+
+Log predictive likelihoods are summed across all 24 features and combined with the log class prior. The class with the higher combined score wins via argmax.
 
 
 ## Lit Review
