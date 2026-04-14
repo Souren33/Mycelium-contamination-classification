@@ -16,7 +16,7 @@
 
 
 ## About
-This project tests the use of two machine learning methods for the quick identification of contamination within fungi. Much of the current methodology for identifying contamination carries significant technological requirements, as noted in our [Lit Review](#lit-review) below. We hope that applying our two methods: **Bayesian** and **CNN** will create an opportunity for consumer-level or grassroots groups to achieve the same or similar results on a budget.
+This project tests the use of two machine learning methods for the quick identification of contamination within fungi. Much of the current methodology for identifying contamination carries significant technological requirements, as noted in our [Final Report](#final-report) below. We hope that applying our two methods: **Bayesian** and **CNN** will create an opportunity for consumer-level or grassroots groups to achieve the same or similar results on a budget.
 
 ## Set Up Instructions
 
