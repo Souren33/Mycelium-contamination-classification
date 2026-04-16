@@ -37,7 +37,29 @@ The dataset is composed images of mycelium in various stages labelled by being e
 Further adjustments are only required for the Bayesian model. In order generate our features we need to convert image data into numerical data. This is done within python, and the first stage involves converting each image to one row of a dataframe. Each column of said dataframe will be a unique (r/g/b)_pixel#. Resulting in a final df with 500 rows and 2 + 3*(128^2) columns (adding two for filename and label). Further modification to the data is done to speed up the Bayesian model, but you can read about that further within our [Final Report](#final-report)
 
 ### CNN
-TBD
+Two CNN variants were developed using Python and TensorFlow Keras.
+#### Custom Keras Model
+
+- 3×3 kernel size across all convolutional layers
+- ReLU activation throughout, sigmoid output for binary classification
+- Max pooling with 2×2 kernel
+- Initial performance was poor, leaky ReLU provided only marginal improvement
+
+#### ResNet50 (Transfer Learning)
+After identifying that color and texture are the key visual indicators of contamination, a pretrained ResNet50 backbone was used:
+- ResNet50 weights pretrained on ImageNet loaded as the feature extractor
+- Custom classification head added for binary output
+- Fine-tuned on the mycelium dataset
+- Performance improved substantially over the custom Keras model
+
+#### Validation
+Stratified k-fold cross-validation was applied:
+- Dataset size (~500 images) made a standard train/test split unreliable
+- Stratified sampling ensured class balance was maintained across folds
+- K-fold allowed the full dataset to contribute to both training and evaluation given the limited data available
+
+#### Note on Comparison with Bayesian Model
+The CNN models use k-fold cross-validation while the Bayesian model uses a standard 80/20 train/test split. This means the two approaches are not evaluated on identical holdouts and direct metric comparison should be interpreted with that caveat in mind.
 
 
 ### Bayesian
@@ -65,7 +87,8 @@ Log predictive likelihoods are summed across all 24 features and combined with t
 
                                                                                                                                                                      
 ## Final Report
-Our final report can be found...
+Our final report can be found here:
+- [Final Report](DS4420_Final_Report_Martone_Prakash.pdf)
 
 ## Project Authors
 Kevin Martone | martone.k@northeastern.edu | [Github](https://github.com/kevinmartone)
