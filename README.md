@@ -87,7 +87,8 @@ Log predictive likelihoods are summed across all 24 features and combined with t
 
                                                                                                                                                                      
 ## Final Report
-Our final report can be found...
+Our final report can be found here:
+- [Final Report](DS4420_Final_Report_Martone_Prakash.pdf)
 
 ## Project Authors
 Kevin Martone | martone.k@northeastern.edu | [Github](https://github.com/kevinmartone)
